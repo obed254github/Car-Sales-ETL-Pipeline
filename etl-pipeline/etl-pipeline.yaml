@@ -1,0 +1,220 @@
+#Extraction transformation and loading yaml file
+id: CarSalesDataETL
+namespace: kestra-task
+
+tasks:
+  - id: extracting_car_sales
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    beforeCommands:
+      - python3 -m venv .venv
+      - . .venv/bin/activate
+      - pip install pandas numpy requests
+    outputFiles:
+      - car_prices.csv
+    warningOnStdErr: false
+    script: |
+      import pandas as pd
+      import numpy as np
+      import requests
+      import re
+      from io import BytesIO
+
+      #Data extraction
+      #Setting Kaggle API credentials
+      KAGGLE_USERNAME = "obedtoo"
+      KAGGLE_KEY = "56449a4950cf32bae0e21bb379d984bd"
+
+      #Downloading the zip file directly
+      url = "https://www.kaggle.com/api/v1/datasets/download/syedanwarafridi/vehicle-sales-data"
+      headers = {"Authorization": f"Bearer {KAGGLE_KEY}"}
+      response = requests.get(url, headers=headers, stream=True)
+
+      #Extracting the CSV from the ZIP file since Kaggle downloads datasets as ZIP
+      from zipfile import ZipFile
+      with ZipFile(BytesIO(response.content)) as zip_file:
+        with zip_file.open("car_prices.csv") as csv_file:
+            df = pd.read_csv(csv_file, encoding='windows-1252')
+      #Saving data to CSV file
+      df.to_csv('car_prices.csv', index=False)
+  - id: transforming_data
+    type: io.kestra.plugin.scripts.python.Script
+    outputFiles:
+      - transformed_data.csv
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    beforeCommands:
+      - python3 -m venv .venv
+      - . .venv/bin/activate
+      - pip install pandas us vininfo requests
+    warningOnStdErr: false
+    script: |
+      import pandas as pd
+      import us
+      from vininfo import Vin
+      import requests
+      #Loading car sases data from the CSV file
+      df = pd.read_csv('{{ outputs.extracting_car_sales.outputFiles["car_prices.csv"] }}')
+      #Dropping missing values since they make up a very small portion of the dataset.
+      df = df.dropna()
+      #renaming columns sellingpriceand saledate to snake case and mmr to market_value
+      df = df.rename(columns = {"sellingprice":"selling_price","vin":"vehicle_identification","saledate":"sale_date","mmr":"market_value"})
+      #Converting the sale _date column to datetime variable
+      df['sale_date'] = pd.to_datetime(df['sale_date'], errors='coerce',utc= True)
+      df = df[df['sale_date'].dt.year>=2015]
+      #Using the library us to map the state abbreviations such as "ca" to "california". The abbreviations are given in small letters.
+      #Converting state codes to uppercase
+      df['state'] = df['state'].str.upper()
+      #Function which will map state abbreviations to full names using
+      def mapper(state_abbr):
+          state = us.states.lookup(state_abbr)
+          return state.name if state else None  # Handle invalid abbreviations
+      #Applying the function to the DataFrame.
+      df['state'] = df['state'].apply(mapper)
+      #Extracting the country where the car was manufactured and fuel type using the NHTSA API and vehicle identification number.
+      # #Function to extract and return the fuel-type of the car using vin number.
+      # def get_fuel_type(vin):
+      #    url = f"https://vpic.nhtsa.dot.gov/api/vehicles/decodevin/{vin}?format=json"
+      #     response = requests.get(url)
+      #   if response.status_code != 200:
+      #     return "Error: Failed to fetch data from NHTSA API."
+      #     results = response.json().get("Results", [])
+      #   #Looking for any fuel type" field in the results
+      #   fuel_types = [
+      #     item['Value']
+      #     for item in results
+      #     if "Fuel Type" in item['Variable'] and item['Value']
+      #     ]
+      #   if fuel_types:
+      #       return ", ".join(fuel_types)
+      #   else:
+      #         return "Fuel type not found or unavailable."
+      # df['fuel_type'] = df['vehicle_identification'].apply(get_fuel_type)
+
+      #The code for decoding fuel type is the one above but it is a slow process getting responses.
+
+      def get_country_of_manufacture(vin):
+        country = Vin(vin)
+        return country.country
+
+
+      df['country_manufactured'] = df['vehicle_identification'].apply(get_country_of_manufacture)
+      #Classifying odometer readings to 'very low', 'low', 'moderate','High' and very low for odometer readings of less than 20,000, 20,001 to 50,000, 50001 to 100000, 100001 to 15000, and over 150,0001.
+      def group_odometer_readings(odometer_reading):
+        if odometer_reading < 20000:
+          return "Very Low"
+        elif odometer_reading < 50000:
+          return "Low"
+        elif odometer_reading <100000:
+          return "Moderate"
+        elif odometer_reading < 150000:
+          return "High"
+        else:
+          return "Very High"
+
+      df["odometer_band"] = df["odometer"].apply(group_odometer_readings)
+      #Getting cars whose selling price is suspicious. Suspicious in the context that selling price is less than 30 percent of the price ratio or higher than that of selling price by market value.
+      #Creating a price ratio variable by dividing selling price by market value
+      df['price_ratio'] = df['selling_price']/df['market_value']
+      #Getting suspicious under valued entries and their indexes.
+      suspicious_under_valued = df[df['price_ratio'] < 0.3].index
+      #Dropping the suspicious under-valued entries.
+      df = df.drop(index = suspicious_under_valued).reset_index(drop = True)
+      #Getting suspicious over-valued entries and their indexes.
+      suspicious_over_valued = df[df["price_ratio"] > 1.5].index
+      #Dropping the suspicious over-valued entries.
+      df = df.drop(index = suspicious_over_valued).reset_index(drop = True)
+      #dropping ratio column after cleaning.
+      df.drop(columns = ['price_ratio'], inplace = True)
+      #Dropping any missing values if there still exists.
+      df = df.dropna()
+      #Randomly selecting 50,000 rows to use in my analysis.
+      df = df.sample(n=50000, random_state=142)
+      # Saving the transformed dataset.
+      df.to_csv('transformed_data.csv', index=False)
+  - id: loading_transformed_data
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    beforeCommands:
+      - python3 -m venv .venv
+      - . .venv/bin/activate
+      - pip install pandas psycopg2-binary
+
+    warningOnStdErr: false
+    script: |
+      import pandas as pd
+      import psycopg2
+      from psycopg2.extras import execute_values
+
+      #Loading the transformed data from stored CSV
+      transformed_data = pd.read_csv('{{ outputs.transforming_data.outputFiles["transformed_data.csv"] }}')
+
+      #Connecting to the PostgreSQL database running in Docker
+      conn = psycopg2.connect(
+          host="postgres",
+          database="kestra",
+          user="kestra",
+          password="k3str4"
+      )
+      cursor = conn.cursor()
+
+      #Creating the table if it doesn't exist
+      cursor.execute( """
+      CREATE TABLE IF NOT EXISTS car_sales (
+          year INT,
+          make VARCHAR,
+          model VARCHAR,
+          odometer_band VARCHAR,
+          country_manufactured VARCHAR,
+          trim VARCHAR,
+          body VARCHAR,
+          transmission VARCHAR,
+          vehicle_identification VARCHAR,
+          state VARCHAR,
+          condition INT,
+          odometer INT,
+          color VARCHAR,
+          interior VARCHAR,
+          seller VARCHAR,
+          market_value INT,
+          selling_price INT,
+          sale_date TIMESTAMP WITH TIME ZONE
+
+      )
+      """)
+      conn.commit()
+
+      #Preparing values for bulk insertion
+      values = [
+          (
+              row['year'], row['make'], row['model'],row['odometer_band'], row['country_manufactured'], row['trim'],
+              row['body'], row['transmission'], row['vehicle_identification'], row['state'],
+              row['condition'], row['odometer'], row['color'], row['interior'], row['seller'],
+              row['market_value'], row['selling_price'], row['sale_date']
+          )
+          for _, row in transformed_data.iterrows()
+      ]
+
+      #Inserting values in bulk using execute_values
+      insert_query = """
+      INSERT INTO car_sales (
+          year, make, model, odometer_band,country_manufactured, trim, body, transmission,
+          vehicle_identification, state, condition, odometer, color, interior,
+          seller, market_value, selling_price, sale_date
+      ) VALUES %s
+      """
+      execute_values(cursor, insert_query, values)
+      conn.commit()
+      conn.commit()
+      cursor.close()
+      conn.close()
+errors:
+  - id: execution_errors
+    type: io.kestra.plugin.notifications.slack.SlackIncomingWebhook
+    url: "{{secret: ('SLACK_WEBHOOK')}}"
+    payload: |
+      {
+        text: "Fail alert: {{errorLogs()[0]['message']}}"
+      }
