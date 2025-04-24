@@ -58,13 +58,17 @@ Creates the car_sales table if it doesn't exist.
 
 Bulk inserts the cleaned dataset into the DB.
 
+### Gantt chart of the complete ETL process
+
+!["workflow"](etl-pipeline/complete flow.png)
+
 ### Error Notifications
 
 Sends Slack alert if workflow fails (requires secret: SLACK_WEBHOOK).
 
 ### 🧪 Kestra Pipeline Overview
 
-!["workflow"](etl-pipeline/workflow.jpg)
+!["workflow"](etl-pipeline/workflow.png)
 
 ## 📊 Power BI Dashboard
 
