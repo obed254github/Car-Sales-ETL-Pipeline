@@ -64,17 +64,13 @@ Sends Slack alert if workflow fails (requires secret: SLACK_WEBHOOK).
 
 ### 🧪 Kestra Pipeline Overview
 
-<pre>
 !["workflow"](etl-pipeline/workflow.jpg)
-</pre>
 
 ## 📊 Power BI Dashboard
 
 The interactive Power BI report (Car_Sales_Analysis.pbix) visualizes key insights:
 
-<pre>
 !['dashboard'](dashboard/sales-dashboard.png)
-</pre>
 
 Open the .pbix file with Power BI Desktop from the dashboard/ folder.
 
