@@ -60,7 +60,7 @@ Bulk inserts the cleaned dataset into the DB.
 
 ### Gantt chart of the complete ETL process
 
-!["workflow"](etl-pipeline/complete flow.png)
+!["workflow"](etl-pipeline/completeflow.png)
 
 ### Error Notifications
 
